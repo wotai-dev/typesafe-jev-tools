@@ -90,35 +90,58 @@ it ships.
 
 ## What the measurements showed
 
-Run on 2026-09-18 against 149 rows of real business data, same set through both models.
+Ten models, 150 identical passages, run 2026-09-18. The task returns a raw probability, which is
+the only honest way to measure calibration. ECE is expected calibration error, the average gap
+between claimed and observed, weighted by bin size. Lower is better. "Unsure" is the share of rows
+placed between 0.35 and 0.65.
 
-| | Accuracy | p50 | p95 | Input tok/row | Output tok/row |
+| Model | Accuracy | ECE | Unsure | p50 | Distinct values |
 |---|---|---|---|---|---|
-| Jev (`jev-1.13.0`) | 79.9% | 432ms | 620ms | 507 | 84 |
-| Claude Haiku 4.5 | **83.2%** | 702ms | 1,244ms | 422 | 19 |
+| Claude Sonnet 5 | 71.3% | **0.062** | 41.3% | 1,674ms | 18 |
+| Claude Fable 5.1 | 70.0% | 0.115 | 36.7% | 3,293ms | 19 |
+| gpt-5.6-terra | 70.0% | 0.173 | 4.0% | 1,551ms | 34 |
+| gpt-5.4-mini | 67.3% | 0.192 | 6.7% | 934ms | 47 |
+| gpt-5.6-luna | 66.7% | 0.243 | 1.3% | 1,186ms | 29 |
+| **Jev** | 66.0% | 0.121 | **34.7%** | **455ms** | **56** |
+| Claude Haiku 4.5 | 66.0% | 0.122 | 2.7% | 631ms | 11 |
+| gpt-5.5 | 65.3% | 0.190 | 11.3% | 1,136ms | 39 |
+| Claude Opus 5 (effort low) | 64.7% | 0.163 | 23.3% | 2,090ms | 33 |
+| gpt-5.6-sol | 64.7% | 0.235 | 7.3% | 2,452ms | 33 |
 
-Haiku was more accurate. The two agreed on 143 of 149 rows. Jev was 1.6x faster, not the 20 to
-200x on TypeSafe's landing page.
+**Sonnet 5 is the best calibrated model here**, at roughly half Jev's error. It takes 1,674ms to do
+it, which is 3.7x Jev's median. A gate that runs on 100% of traffic cannot usually afford that, so
+the comparison that decides anything is inside the sub-second budget:
 
-The separation was in the confidence value:
+| Model | p50 | ECE | Unsure | Distinct values |
+|---|---|---|---|---|
+| **Jev** | **455ms** | **0.121** | **34.7%** | **56** |
+| Claude Haiku 4.5 | 631ms | 0.122 | 2.7% | 11 |
+| gpt-5.4-mini | 934ms | 0.192 | 6.7% | 47 |
 
-| Stated confidence | Jev n / accuracy | Haiku n / accuracy |
-|---|---|---|
-| 0.00–0.60 | 7 → 28.6% | 1 → 100% |
-| 0.60–0.80 | 11 → 36.4% | 7 → 71.4% |
-| 0.80–0.95 | 32 → 62.5% | 29 → **55.2%** |
-| 0.95–1.00 | 99 → 93.9% | 112 → 91.1% |
+Jev is the fastest model in the whole field, the best calibrated of the three fast ones, and flags
+uncertainty 5x more often than the next-best. That last column is what an escalation rule runs on:
+route uncertain rows to a human or a bigger model and the rule fires on 34.7% of Jev's rows and
+2.7% of Haiku's. The ambiguous rows have not gone anywhere; Haiku answers them confidently and
+sends them through.
 
-Jev's accuracy climbs monotonically with its stated confidence. Haiku's inverts in the middle, so
-a threshold placed there does the opposite of what you intended. Across 149 rows Haiku produced
-**10 distinct confidence values** and put 0.95 on 98 of them; Jev produced **32**.
+If your code does not branch on the confidence value, none of this matters and you should use what
+you already have. That is why the hook asks the question instead of answering it.
 
-That is the whole reason to reach for a System One model, and the reason the hook asks the
-question instead of answering it: if your code does not branch on the confidence, use whatever you
-already have.
+Two more tasks, Jev against Haiku only:
+
+| Task | Rows | Jev | Haiku | Jev p50 | Haiku p50 |
+|---|---|---|---|---|---|
+| business category | 149 | 79.9% | **83.2%** | 432ms | 702ms |
+| commit type | 100 | **50.0%** | 42.0% | 468ms | 695ms |
+
+Accuracy splits. Latency does not.
 
 TypeSafe has not published pricing. `/pricing` and `/limits` both 404 as of 2026-09-18, so the
-"40 to 1,000x cheaper" claim is not currently checkable.
+"40 to 1,000x cheaper" claim is not currently checkable. Measured speed was 1.4x to 3.7x depending
+on the comparison, against a claimed 20 to 200x.
+
+Open-weight models (DeepSeek, GLM, Kimi) are absent because no API key was on hand, not because
+they were excluded.
 
 Full writeup: [wotai.co](https://wotai.co)
 
