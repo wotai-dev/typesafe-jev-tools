@@ -90,27 +90,43 @@ it ships.
 
 ## What the measurements showed
 
-Ten models, 150 identical passages, run 2026-09-18. The task returns a raw probability, which is
-the only honest way to measure calibration. ECE is expected calibration error, the average gap
-between claimed and observed, weighted by bin size. Lower is better. "Unsure" is the share of rows
-placed between 0.35 and 0.65.
+Sixteen models, 150 identical passages, run 2026-09-18, zero errors across 2,400 calls. The task
+returns a raw probability, which is the only honest way to measure calibration. ECE is expected
+calibration error, the average gap between claimed and observed, weighted by bin size. Lower is
+better. "Unsure" is the share of rows placed between 0.35 and 0.65.
 
-| Model | Accuracy | ECE | Unsure | p50 | Distinct values |
-|---|---|---|---|---|---|
-| Claude Sonnet 5 | 71.3% | **0.062** | 41.3% | 1,674ms | 18 |
-| Claude Fable 5.1 | 70.0% | 0.115 | 36.7% | 3,293ms | 19 |
-| gpt-5.6-terra | 70.0% | 0.173 | 4.0% | 1,551ms | 34 |
-| gpt-5.4-mini | 67.3% | 0.192 | 6.7% | 934ms | 47 |
-| gpt-5.6-luna | 66.7% | 0.243 | 1.3% | 1,186ms | 29 |
-| **Jev** | 66.0% | 0.121 | **34.7%** | **455ms** | **56** |
-| Claude Haiku 4.5 | 66.0% | 0.122 | 2.7% | 631ms | 11 |
-| gpt-5.5 | 65.3% | 0.190 | 11.3% | 1,136ms | 39 |
-| Claude Opus 5 (effort low) | 64.7% | 0.163 | 23.3% | 2,090ms | 33 |
-| gpt-5.6-sol | 64.7% | 0.235 | 7.3% | 2,452ms | 33 |
+| Model | Accuracy | ECE | Unsure | p50 | Distinct | Cost / 150 |
+|---|---|---|---|---|---|---|
+| z-ai/glm-5.3-flash | **74.0%** | 0.089 | 6.0% | 7,527ms | 28 | $0.026 |
+| Claude Sonnet 5 | 71.3% | **0.062** | 41.3% | 1,674ms | 18 | $0.160 |
+| Claude Fable 5.1 | 70.0% | 0.115 | 36.7% | 3,293ms | 19 | $0.806 |
+| gpt-5.6-terra | 70.0% | 0.173 | 4.0% | 1,551ms | 34 | n/a |
+| moonshotai/kimi-k2.5 | 70.0% | 0.199 | 0.7% | 12,268ms | 17 | $0.363 |
+| deepseek/deepseek-v4-flash | 69.3% | 0.183 | 3.3% | 1,361ms | 15 | **$0.003** |
+| gpt-5.4-mini | 67.3% | 0.192 | 6.7% | 934ms | 47 | n/a |
+| gpt-5.6-luna | 66.7% | 0.243 | 1.3% | 1,186ms | 29 | n/a |
+| Claude Haiku 4.5 | 66.0% | 0.122 | 2.7% | 631ms | 11 | $0.064 |
+| **Jev** | 66.0% | 0.121 | **34.7%** | **455ms** | **56** | n/a |
+| deepseek/deepseek-v4-pro | 65.3% | 0.262 | 0.7% | 11,156ms | 23 | $0.277 |
+| gpt-5.5 | 65.3% | 0.190 | 11.3% | 1,136ms | 39 | n/a |
+| z-ai/glm-5.3 | 64.7% | 0.225 | 6.0% | 4,082ms | 28 | $0.268 |
+| gpt-5.6-sol | 64.7% | 0.235 | 7.3% | 2,452ms | 33 | n/a |
+| Claude Opus 5 (effort low) | 64.7% | 0.163 | 23.3% | 2,090ms | 33 | $0.400 |
+| moonshotai/kimi-k3 | 58.0% | 0.309 | 1.3% | 5,677ms | 30 | $0.731 |
 
-**Sonnet 5 is the best calibrated model here**, at roughly half Jev's error. It takes 1,674ms to do
-it, which is 3.7x Jev's median. A gate that runs on 100% of traffic cannot usually afford that, so
-the comparison that decides anything is inside the sub-second budget:
+Open-weight models ran through OpenRouter, so their latency includes a routing hop.
+
+**Only four of the sixteen will say they are unsure.** Sonnet 5 at 41.3%, Fable 5.1 at 36.7%, Jev
+at 34.7%, Opus 5 at 23.3%. Everything else sits at 7.3% or below, and that drop does not care about
+price or vintage: every GPT-5 variant is at 11.3% or less, every open-weight model at 6.0% or less,
+and `kimi-k2.5` and `deepseek-v4-pro` both land on 0.7%, which is one row in 150.
+
+**Jev is the only one of those four that answers in under a second.** The next fastest is Sonnet 5
+at 3.7x the latency.
+
+Sonnet 5 is the best calibrated model here, at roughly half Jev's error. A gate that runs on 100%
+of traffic cannot usually afford 1,674ms, so the comparison that decides anything is inside the
+sub-second budget:
 
 | Model | p50 | ECE | Unsure | Distinct values |
 |---|---|---|---|---|
@@ -140,8 +156,8 @@ TypeSafe has not published pricing. `/pricing` and `/limits` both 404 as of 2026
 "40 to 1,000x cheaper" claim is not currently checkable. Measured speed was 1.4x to 3.7x depending
 on the comparison, against a claimed 20 to 200x.
 
-Open-weight models (DeepSeek, GLM, Kimi) are absent because no API key was on hand, not because
-they were excluded.
+DeepSeek, GLM and Kimi ran through OpenRouter. GPT-5 cost cells are empty because I have no rate
+card I can cite for them, and an empty cell beats a guess.
 
 Full writeup: [wotai.co](https://wotai.co)
 
