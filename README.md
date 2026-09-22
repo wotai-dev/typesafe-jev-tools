@@ -53,9 +53,16 @@ Three trigger classes, all at the top of the script:
 
 ```bash
 A='anthropic|@anthropic-ai|openai|messages\.create|chat\.completions|responses\.create|generateText'
-B_CHOICE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(classif|categoriz|route|detect|triage)'
-B_SCORE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(score|rank|relevan)'
+B_CHOICE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*([Cc]lassif|[Cc]ategoriz|[Rr]oute|[Dd]etect|[Tt]riage|[Ll]abel|[Bb]ucket|[Dd]isambiguat|[Ii]ntent|[Ss]entiment|[Pp]ick|[Jj]udg)'
+B_SCORE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*([Ss]core|[Rr]ank|[Rr]elevan|[Aa]ssess|[Gg]rade|[Ss]ever|[Pp]riorit|[Tt]oxic|[Qq]ualit)'
 ```
+
+Each fragment leads with `[Xx]` rather than the class being case-insensitive, so camelCase
+compounds match (`parseIntent`, `getSentiment`, `assessSentiment`) while `const SCORE_MAX = 10`
+does not — a `grep -i` would have flagged that constant. Deliberately excluded as too generic to be
+decision-shaped: `evaluate`, `match`, `resolve`, `select`, `check`, `validate`, `parse`, `infer`
+(TypeScript type inference is mechanical) and `similar` (cosine math). Measured on 22 names: 8/8
+camelCase decision names fire, 0/4 SCREAMING_CASE constants and 0/10 ordinary functions do.
 
 `B` is split in two so the advice can name the right primitive — a `classify*`/`route*`/`triage*`
 name reads as a **Choice** (a typed option), a `score*`/`rank*`/`relevance*` name as a **Score** (a
@@ -106,19 +113,22 @@ its whole output recommending. **Classifying the decision is itself a band-three
 person shown the code answers in under a second — so the regex is the cheap gate and Jev is the
 judge on the rows it flags.
 
-**This is off unless a key is found.** With no key the hook behaves exactly as documented above and
-nothing leaves your machine.
+**This is off unless you switch it on.** It takes `TYPESAFE_CHECK_JUDGE=1` *and* a key — a key
+present for some other reason is not consent to ship your source anywhere. With the judge off the
+hook behaves exactly as documented above and nothing leaves your machine.
 
 ### Turning it on
 
 ```bash
-# any one of these; checked in this order
+export TYPESAFE_CHECK_JUDGE=1                    # required — the judge is opt-in
+
+# and a key, from any one of these, checked in this order
 export TYPESAFE_API_KEY=...                      # environment
 echo 'TYPESAFE_API_KEY=...' > .claude/typesafe-check.env
 echo 'TYPESAFE_API_KEY=...' >> .env.local        # gitignore it
-
-TYPESAFE_CHECK_JUDGE=0   # disable the judge, keep the gate
 ```
+
+Unset `TYPESAFE_CHECK_JUDGE` (or set it to anything but `1`) to go back to the gate alone.
 
 Needs `curl` in addition to `bash`, `jq` and `grep`. If `curl` is missing, the key is absent, the
 request times out (4s), the API returns non-200, or the JSON will not parse, the hook falls back to
