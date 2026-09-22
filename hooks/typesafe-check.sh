@@ -12,7 +12,7 @@
 #
 # Advisory only - never blocks, and never fails closed. No key, no curl, a
 # timeout, a non-200, or unparseable JSON all fall back to the gate-only text.
-# Disable the judge with TYPESAFE_CHECK_JUDGE=0. Disable the hook with /hooks.
+# The judge is opt-in: TYPESAFE_CHECK_JUDGE=1 plus a key. Disable the hook: /hooks.
 set -uo pipefail
 
 payload=$(cat)
@@ -34,8 +34,21 @@ new=$(printf '%s' "$payload" | jq -r '
 # Class A: an LLM call that may be overqualified for the judgment it makes.
 A='anthropic|@anthropic-ai|openai|messages\.create|chat\.completions|responses\.create|generateText'
 # Class B, split so the advice can name the right primitive instead of guessing.
-B_CHOICE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(classif|categoriz|route|detect|triage)'
-B_SCORE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(score|rank|relevan)'
+# Widened once the judge existed, because recall was the judge's blind spot: Jev
+# only ever sees what the gate flags, so `assessSentiment` and `pickHandler` were
+# invisible no matter how good the judge got. A false positive now costs one line
+# instead of eight - but it also costs one API call, so this is not a licence to
+# match everything. Deliberately still OUT as too generic to be decision-shaped:
+# evaluate, match, resolve, select, check, validate, parse, infer (TypeScript type
+# inference is mechanical), similar (cosine math). Tighten before loosening either
+# way - a hook that fires on everything gets disabled inside a day.
+#
+# Each fragment leads with [Xx] rather than the class being case-insensitive, so
+# camelCase compounds match (`parseIntent`, `getSentiment`) while SCREAMING_CASE
+# constants do not: `const SCORE_MAX = 10` is mechanical and a `grep -i` would
+# have flagged it.
+B_CHOICE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*([Cc]lassif|[Cc]ategoriz|[Rr]oute|[Dd]etect|[Tt]riage|[Ll]abel|[Bb]ucket|[Dd]isambiguat|[Ii]ntent|[Ss]entiment|[Pp]ick|[Jj]udg)'
+B_SCORE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*([Ss]core|[Rr]ank|[Rr]elevan|[Aa]ssess|[Gg]rade|[Ss]ever|[Pp]riorit|[Tt]oxic|[Qq]ualit)'
 
 # Two questions, not one: is the decision being AUTHORED here, or does it merely
 # already exist in this file? An Edit's new_string is only the replacement text,
@@ -105,11 +118,15 @@ mkdir -p "$mark_dir" 2>/dev/null && : > "$mark" 2>/dev/null || true
 # file per session. Everything here is best-effort: any failure leaves
 # judge="off" and the gate-only text below is what ships.
 #
-# PRIVACY: this sends the code being authored to api.typesafe.ai. It is off
-# unless a key is found. See the README section "Letting Jev judge".
+# PRIVACY: this sends the code being authored to api.typesafe.ai, so it is off
+# unless you say otherwise - TYPESAFE_CHECK_JUDGE=1, explicitly, plus a key. An
+# earlier version enabled itself whenever a key happened to be resolvable, which
+# is the wrong default for a file people install with curl: a key present for some
+# other reason should not quietly start shipping their source anywhere.
+# See the README section "Letting Jev judge".
 # ---------------------------------------------------------------------------
 judge="off"; jband=""; jconf=""; jsem=""; jmech=""
-if [ "$mode" = "author" ] && [ "${TYPESAFE_CHECK_JUDGE:-1}" != "0" ] && command -v curl >/dev/null 2>&1; then
+if [ "$mode" = "author" ] && [ "${TYPESAFE_CHECK_JUDGE:-0}" = "1" ] && command -v curl >/dev/null 2>&1; then
   key="${TYPESAFE_API_KEY:-}"
   if [ -z "$key" ]; then
     for f in "${CLAUDE_PROJECT_DIR:-.}/.claude/typesafe-check.env" "${CLAUDE_PROJECT_DIR:-.}/.env.local"; do
