@@ -10,6 +10,12 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true,
     "allowImportingTsExtensions": true,
+    // Everything here runs on Node's type stripping, which refuses enums,
+    // namespaces and parameter properties. Plain `tsc --noEmit` accepts all
+    // three, so without these a module no test imports would pass CI and then
+    // throw at run time -- during a measured run against a live server.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
     "noEmit": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true

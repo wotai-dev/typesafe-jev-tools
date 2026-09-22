@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
@@ -43,6 +43,10 @@ test('the compose file holds the stated measurement confounds constant', () => {
     ['ONLINE_MODE', 'false'],
     ['DIFFICULTY', 'normal'],
     ['MODE', 'survival'],
+    // The exact value, not just "some digits". A different fixed seed is a
+    // different world, which silently invalidates the recorded spawn position
+    // and every cross-run comparison against the published run.
+    ['SEED', '8675309'],
   ];
 
   for (const [key, expected] of fixed) {
@@ -55,10 +59,49 @@ test('the compose file holds the stated measurement confounds constant', () => {
     );
   }
 
+  // The image tag is a confound too: a floating tag would change the server
+  // under a fixed Minecraft version.
+  const image = compose.match(/^\s*image:\s*(\S+)/m)?.[1];
+  assert.ok(image, 'docker-compose.yml must pin an image');
+  assert.doesNotMatch(image, /:latest$|^[^:]+$/, `image must be pinned to a tag, got "${image}"`);
+
+  // ONLINE_MODE is false and OPS grants op on login, so a 0.0.0.0 publish
+  // would hand operator to anyone who can reach this machine on 25565.
   assert.match(
     compose,
-    /^\s*SEED:\s*"\d+"/m,
-    'SEED must be pinned to a fixed value so every run gets the same world',
+    /^\s*-\s*"127\.0\.0\.1:25565:25565"/m,
+    'the server port must be bound to loopback, not published on all interfaces',
+  );
+});
+
+/**
+ * The invariant the whole design rests on: the observation, projection and
+ * reporting path never imports mineflayer, so replay and the report run with
+ * no game present. A doc comment cannot enforce that, and the later gate that
+ * runs replay with the container stopped cannot detect a leak either --
+ * importing mineflayer does not require a server, so a leaked import passes
+ * that gate and surfaces much later as a hang or a wrong number.
+ *
+ * U1 is the unit that establishes this contract, which makes it the cheapest
+ * possible moment to guard it: right now there is nothing in src/ to leak.
+ */
+test('nothing on the pure path imports mineflayer', () => {
+  const srcDir = new URL('../src/', import.meta.url);
+  const offenders: string[] = [];
+
+  for (const entry of readdirSync(srcDir, { recursive: true, encoding: 'utf8' })) {
+    if (!entry.endsWith('.ts')) continue;
+    const body = readFileSync(new URL(entry, srcDir), 'utf8');
+    // Strip comments so prose about mineflayer does not trip the scan.
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    if (/\bfrom\s+['"]mineflayer|require\(\s*['"]mineflayer/.test(code)) offenders.push(entry);
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `these modules import mineflayer and must not: ${offenders.join(', ')}. ` +
+      'Block-world facts belong in RawObservation, captured at observation time.',
   );
 });
 
@@ -68,9 +111,10 @@ test('the compose file holds the stated measurement confounds constant', () => {
  * fails, and the container exits 1 before the world is generated. Offline
  * UUIDs are derived locally instead, so OPS must carry the UUID.
  *
- * Recomputed here rather than hard-coded: renaming the bot without updating
- * OPS would otherwise silently leave it unopped, and it cannot then reset
- * itself between the calibration pilot and the measured run.
+ * Recomputed here rather than hard-coded. Note the limit: this reads
+ * .env.example, while the bot logs in with MC_USERNAME from the gitignored
+ * .env.local, so a rename made only there still passes. The runtime path has
+ * to verify op after connecting; recorded on #6.
  */
 test('OPS carries the bot username as an offline UUID, not a name', () => {
   const envExample = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');

@@ -8,6 +8,11 @@ on:
   push:
     branches: [main]
 
+# `npm ci` runs install scripts from the whole transitive tree on every PR.
+# Nothing here needs more than read access to the checkout.
+permissions:
+  contents: read
+
 # Cancel superseded runs on PR branches, never on the default branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,9 +31,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Matches engines.node in minecraft/package.json, which is set by
-          # mineflayer 4.39.0's own `engines.node: ">=22"`.
-          node-version: '22'
+          # Matches engines.node in minecraft/package.json. mineflayer 4.39.0
+          # requires >=22, but `node --test` only strips TypeScript types
+          # without a flag from 22.18 on, so 22.18 is the real floor.
+          node-version: '22.18'
           cache: npm
           cache-dependency-path: minecraft/package-lock.json
 

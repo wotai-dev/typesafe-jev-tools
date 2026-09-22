@@ -61,6 +61,14 @@ export interface RawObservation {
   capturedAt: string;
 
   position: Vec3;
+  /**
+   * Satiation, not carried food. Both of these are `undefined` at the moment
+   * the bot spawns -- the server sends the health packet just after the spawn
+   * event -- so `observe()` must not capture until it has arrived. Capturing
+   * early assigns `undefined` into a `number` with no compile error, and the
+   * projection then bands a NaN, so the first rows of every run would carry a
+   * confidently wrong health band.
+   */
   health: number;
   food: number;
   oxygen: number;
@@ -72,6 +80,15 @@ export interface RawObservation {
   inventory: ObservedItem[];
   entities: ObservedEntity[];
   nearestResource: ObservedResource | null;
+
+  /**
+   * Whether the bot has open sky above it. Like line of sight and the nearest
+   * resource this needs the block world, so it is captured rather than derived.
+   * Without it `legality('shelter')` collapses to "does it hold blocks", and
+   * the bot can choose to shelter while already enclosed. Adding it later
+   * would invalidate replay of every row captured before the change.
+   */
+  hasSkyAccess: boolean;
 
   /**
    * The action already executing. A logged input, not loop state: the override
@@ -107,7 +124,13 @@ export interface RequestState {
   hunger: LevelBand;
   light: LightBand;
   daylight: DaylightBand;
-  food: 'none' | 'some';
+  /**
+   * Carried food, not satiation -- `hunger` above is satiation. These are
+   * deliberately not both called "food": this object is the model's entire
+   * input and the human labeler reads the same slots, so two keys sharing a
+   * word with different meanings biases the one judgment being measured.
+   */
+  foodInInventory: 'none' | 'some';
   blocks: 'none' | 'some';
   weapon: 'none' | 'melee';
   gatherable: 'none' | RangeBand;
@@ -118,7 +141,11 @@ export interface RequestState {
 // Decision record — one per decision, the unit of the dataset
 // ---------------------------------------------------------------------------
 
-export type OverrideReason = 'low-confidence-commitment' | 'illegal-action' | null;
+export type OverrideReason =
+  | 'low-confidence-commitment'
+  | 'illegal-action'
+  | 'call-failed'
+  | null;
 
 export interface JudgementResult {
   action: Action;
@@ -134,6 +161,27 @@ export interface JudgementResult {
   latencyMs: number;
 }
 
+/**
+ * A union rather than two nullable fields, so a row cannot claim both a
+ * judgement and a failure, or neither. `overrideReason: 'call-failed'` then
+ * explains every `actionTaken` the model did not choose -- otherwise a failed
+ * call carries the same `null` reason a clean model answer does, and any
+ * report grouping by that field counts failures as model-answered.
+ */
+export type JudgementOutcome =
+  | {
+      ok: true;
+      judgement: JudgementResult;
+      /**
+       * The raw response body, before parsing. Without it a mis-mapped
+       * probability or a misread noul is undetectable in the published rows,
+       * and there is nothing for a replay to be diffed against -- which is
+       * also how the run would establish whether Jev is deterministic at all.
+       */
+      response: unknown;
+    }
+  | { ok: false; failure: string };
+
 export interface DecisionRecord {
   id: string;
   /** Raw first: without it the projection can never be varied and re-run. */
@@ -141,9 +189,7 @@ export interface DecisionRecord {
   state: RequestState;
   /** The exact request body sent, so a row is replayable verbatim. */
   request: unknown;
-  judgement: JudgementResult | null;
-  /** Populated instead of `judgement` when the call failed. */
-  failure: string | null;
+  outcome: JudgementOutcome;
   /** What actually ran, after the confidence gate and the legality check. */
   actionTaken: Action;
   overrideReason: OverrideReason;

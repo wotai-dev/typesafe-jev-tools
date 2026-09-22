@@ -2,10 +2,13 @@ node_modules/
 .env.local
 
 # Working run output is noise: many throwaway runs while developing.
-logs/
+#
+# Note the `logs/*` rather than `logs/`: git never descends into an excluded
+# DIRECTORY, so a negation cannot re-include anything beneath one. Excluding
+# the contents instead is what lets the next rule work at all.
+logs/*
 
 # The PUBLISHED run is the exception and is tracked on purpose. Without its
 # decision log and its labels, a reader can rerun the procedure but cannot
 # check a single printed cell against the artifacts that produced it.
-!published/
-!published/**
+!logs/published/

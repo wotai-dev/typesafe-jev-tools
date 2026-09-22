@@ -24,6 +24,7 @@ than a default, so a reviewer can challenge it and a reader can reproduce it.
 | Difficulty | `normal` | Hostile spawn rates are the independent variable's context; changing this changes what the numbers mean. |
 | Online mode | `false` | No Mojang auth, so the bot logs in with a bare username. |
 | Model | `jev-1.13.0` | A versioned ID, not an alias. Aliases move when a release ships, and confidence thresholds are tuned against one version. |
+| Port | `127.0.0.1:25565` | Loopback only. Online mode is off and `OPS` grants operator on login, so a `0.0.0.0` publish would hand op to anyone who can reach this machine — and on Linux a Docker publish bypasses host firewall rules. |
 
 `26.1` is also in mineflayer's tested list and is newer. The `1.21` line is pinned instead because
 its pathfinder ecosystem is more settled. Minecraft `26.2` is served by `minecraft-data` but is
@@ -74,7 +75,8 @@ minecraft/
 gives us; `RequestState` is what Jev is allowed to see; the function between them does every
 calculation. Jev never receives a number — distance is a `melee`/`bow`/`far` band, health is a
 level, and so on. Nothing in that path imports mineflayer, because the replay and report paths
-have to run with no game present.
+have to run with no game present — and `npm test` enforces that rather than trusting the comment,
+because a leaked import would pass the offline gate too (importing mineflayer needs no server).
 
 ## Running it
 
