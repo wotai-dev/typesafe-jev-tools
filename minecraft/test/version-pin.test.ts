@@ -102,7 +102,17 @@ function importsMineflayer(entry: string): boolean {
   const body = readFileSync(new URL(entry, SRC_DIR), 'utf8');
   // Strip comments so prose about mineflayer does not trip the scan.
   const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  return /\bfrom\s+['"]mineflayer|require\(\s*['"]mineflayer/.test(code);
+  // Every form that actually pulls the module in, not just the two obvious
+  // ones. A bare side-effect import and a dynamic import are exactly how a
+  // module would lazily acquire mineflayer, and a matcher blind to them would
+  // pass while the invariant it guards was already broken.
+  return [
+    /\bfrom\s*['"]mineflayer(?:\/[^'"]*)?['"]/, //        import x from 'mineflayer'
+    /\bimport\s*['"]mineflayer(?:\/[^'"]*)?['"]/, //      import 'mineflayer'
+    /\bimport\s*\(\s*['"]mineflayer(?:\/[^'"]*)?['"]/, // await import('mineflayer')
+    /\brequire\s*\(\s*['"]mineflayer(?:\/[^'"]*)?['"]/, // require('mineflayer')
+    /\bcreateRequire\b[\s\S]{0,200}?['"]mineflayer(?:\/[^'"]*)?['"]/, // via createRequire
+  ].some((pattern) => pattern.test(code));
 }
 
 test('only the observation module imports mineflayer', () => {

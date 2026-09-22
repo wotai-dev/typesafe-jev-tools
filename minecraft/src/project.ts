@@ -63,11 +63,18 @@ export function distanceBetween(from: Vec3, to: Vec3): number {
 
 function requireFinite(value: number, field: string, tick: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
+    // The spawn-packet explanation is true of health and food and misleading
+    // about anything else: pointing an operator at a health packet when the
+    // real problem is a light level sends them to the wrong place.
+    const spawnHint =
+      field === 'health' || field === 'food'
+        ? ' The server sends the health packet just after the spawn event rather than with it,' +
+          ' so an observation captured too early carries undefined here — and banding it would' +
+          ' put a confidently wrong level on the first rows of the run.'
+        : '';
     throw new ProjectionError(
-      `cannot project tick ${String(tick)}: ${field} is ${String(value)}, not a finite number. ` +
-        'The server sends the health packet just after the spawn event rather than with it, so ' +
-        'an observation captured too early carries undefined here — and banding it would put a ' +
-        'confidently wrong level on the first rows of the run.',
+      `cannot project tick ${String(tick)}: ${field} is ${String(value)}, not a finite number.` +
+        spawnHint,
     );
   }
   return value;
