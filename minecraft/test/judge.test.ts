@@ -8,6 +8,7 @@ import { TypeSafeClient } from '@typesafe-ai/sdk';
 import {
   DEFAULT_QUESTION_SET_PATH,
   StateTooLargeError,
+  assertPinnedModel,
   buildRequest,
   judge,
   loadQuestionSet,
@@ -296,13 +297,65 @@ test('the response parses into a record carrying every field R6 requires', async
   assert.deepEqual(response, responseBody());
 });
 
-test('the recorded model is the one the response reports, not the alias that was sent', async () => {
+test('the recorded model is the one the response reports, not the one that was sent', async () => {
+  // Two versioned IDs rather than an alias: a server may serve a different
+  // build than the one requested, and the row must record what answered.
   const { client, attempts } = ok([{ status: 200, body: responseBody({ model: 'jev-1.14.2' }) }]);
-  const result = await judge(FIXTURE_STATE, loadQuestionSet(), { client, model: 'jev-latest' });
+  const result = await judge(FIXTURE_STATE, loadQuestionSet(), { client, model: 'jev-1.13.0' });
 
-  assert.equal((sent(attempts).body as { model: string }).model, 'jev-latest');
+  assert.equal((sent(attempts).body as { model: string }).model, 'jev-1.13.0');
   assert.ok(result.outcome.ok);
   assert.equal(result.outcome.judgement.model, 'jev-1.14.2');
+});
+
+test('a moving alias is refused wherever it enters, including on the replay path', async () => {
+  // An empty-string check is not enough: jev-latest is non-empty and moves
+  // when a release ships, so a run could be answered by a version whose
+  // confidence thresholds nobody tuned.
+  for (const alias of ['jev-latest', 'jev-preview', '', 'gpt-5', 'jev-1.13']) {
+    assert.throws(() => assertPinnedModel(alias), /pinned version/, `accepted ${alias}`);
+  }
+  assert.doesNotThrow(() => assertPinnedModel('jev-1.13.0'));
+
+  const { client } = ok([{ status: 200, body: responseBody() }]);
+  await assert.rejects(
+    () => judge(FIXTURE_STATE, loadQuestionSet(), { client, model: 'jev-latest' }),
+    /pinned version/,
+  );
+
+  // replay() sends a logged body straight through, so it is the path that
+  // would otherwise be the hole in the guarantee.
+  const logged = buildRequest(FIXTURE_STATE, loadQuestionSet(), 'jev-1.13.0');
+  await assert.rejects(
+    () => replay({ ...logged, model: 'jev-latest' }, { client }),
+    /pinned version/,
+  );
+});
+
+test('a confidence outside [0, 1] is refused, not recorded and banded', async () => {
+  for (const confidence of [-1, 2, 1.5]) {
+    const body = responseBody();
+    (body.answers as Record<string, Record<string, unknown>>)['action']!['confidence'] = confidence;
+    const { client } = ok([{ status: 200, body }]);
+    const result = await judge(FIXTURE_STATE, loadQuestionSet(), { client, model: MODEL });
+    assert.equal(result.outcome.ok, false, `confidence ${confidence} was accepted`);
+  }
+});
+
+test('probabilities outside [0, 1] are refused even when they sum to 1', async () => {
+  // flee=-1 and fight=2 sum to 1 but are not probabilities, and a sum-only
+  // check would record them as a valid distribution.
+  const body = responseBody();
+  const p = (body.answers as Record<string, Record<string, Record<string, number>>>)['action']![
+    'probabilities'
+  ]!;
+  for (const key of Object.keys(p)) p[key] = 0;
+  p['flee'] = -1;
+  p['fight'] = 2;
+
+  const { client } = ok([{ status: 200, body }]);
+  const result = await judge(FIXTURE_STATE, loadQuestionSet(), { client, model: MODEL });
+  assert.equal(result.outcome.ok, false);
 });
 
 test('the probabilities over the six actions sum to 1', async () => {

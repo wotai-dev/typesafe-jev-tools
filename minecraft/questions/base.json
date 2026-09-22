@@ -20,7 +20,7 @@
       "instructions": "Reading `state`, is this bot in danger of dying soon if it carries on doing what it is already doing?",
       "criteria": {
         "true": "Something in `state` can kill the bot shortly. A hostile `nearestThreat` is within `melee` or `bow` range, or `health` is already `critical`, or `hunger` is `critical` with `foodInInventory` of `none`. Carrying on unchanged ends with the bot dead.",
-        "false": "Nothing in `state` can do the bot serious harm right now. Either there is no hostile in range, or `health` is high enough to absorb what is there, and neither hunger nor drowning is close to killing it."
+        "false": "Nothing in `state` can do the bot serious harm right now. Either there is no hostile in range, or `health` is high enough to absorb what is there, and hunger is not close to killing it."
       }
     },
     "situation_is_ambiguous": {

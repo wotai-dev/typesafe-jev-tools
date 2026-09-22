@@ -215,8 +215,30 @@ export function buildRequest(
   questionSet: QuestionSet,
   model: string,
 ): JevRequest {
-  if (model === '') throw new Error('a model must be pinned explicitly; see the header comment');
+  assertPinnedModel(model);
   return { state, model, questions: questionSet.questions };
+}
+
+/** A concrete released version, never a moving alias. */
+const PINNED_MODEL = /^jev-\d+\.\d+\.\d+$/;
+
+/**
+ * Refuse any model that is not a pinned version.
+ *
+ * An empty-string check is not enough: `jev-latest` and `jev-preview` are
+ * non-empty and both move when a release ships, so a run could silently be
+ * answered by a version whose confidence thresholds nobody tuned. This is
+ * asserted at the send boundary rather than only in `buildRequest`, because
+ * `replay()` sends a logged body straight through and would otherwise be the
+ * hole in the guarantee.
+ */
+export function assertPinnedModel(model: unknown): asserts model is string {
+  if (typeof model !== 'string' || !PINNED_MODEL.test(model)) {
+    throw new Error(
+      `model must be a pinned version like "jev-1.13.0", got ${JSON.stringify(model)}. ` +
+        'Aliases such as jev-latest move when a release ships.',
+    );
+  }
 }
 
 /**
@@ -310,6 +332,10 @@ async function send(
   // Wall clock around the whole call, so a decision that the SDK retried
   // internally records the time the bot actually spent waiting rather than the
   // duration of the attempt that happened to succeed.
+  // Both judge() and replay() funnel through here, so this is the one place
+  // that can guarantee no run is answered by an unpinned version.
+  assertPinnedModel(request.model);
+
   const started = performance.now();
   try {
     const response = await options.client.systemOne(asPayload(request), options.requestOptions);
@@ -366,8 +392,18 @@ function parse(response: unknown, latencyMs: number): JudgementResult {
         `not one of the six bounded actions`,
     );
   }
-  if (typeof action.confidence !== 'number' || !Number.isFinite(action.confidence)) {
-    throw new ParseError(`answers.${ACTION_QUESTION}.confidence is not a number`);
+  if (
+    typeof action.confidence !== 'number' ||
+    !Number.isFinite(action.confidence) ||
+    action.confidence < 0 ||
+    action.confidence > 1
+  ) {
+    // A finite check alone admits -1 or 2, which would be recorded as a
+    // successful judgement and then mis-banded by the confidence gate.
+    throw new ParseError(
+      `answers.${ACTION_QUESTION}.confidence is ${JSON.stringify(action.confidence)}, ` +
+        'not a probability in [0, 1]',
+    );
   }
   const probabilities = readDistribution(action.probabilities);
 
@@ -429,6 +465,14 @@ function readDistribution(value: unknown): Record<Action, number> {
     const probability = value[name];
     if (typeof probability !== 'number' || !Number.isFinite(probability)) {
       throw new ParseError(`probabilities.${name} is missing or not a number`);
+    }
+    if (probability < 0 || probability > 1) {
+      // Checking only the total lets flee=-1 and fight=2 through, because they
+      // sum to 1. Those are not probabilities, and the gate and the report
+      // would treat them as a valid distribution.
+      throw new ParseError(
+        `probabilities.${name} is ${probability}, not a probability in [0, 1]`,
+      );
     }
     distribution[name] = probability;
     total += probability;
