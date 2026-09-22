@@ -75,34 +75,80 @@ test('the compose file holds the stated measurement confounds constant', () => {
 });
 
 /**
- * The invariant the whole design rests on: the observation, projection and
- * reporting path never imports mineflayer, so replay and the report run with
- * no game present. A doc comment cannot enforce that, and the later gate that
- * runs replay with the container stopped cannot detect a leak either --
- * importing mineflayer does not require a server, so a leaked import passes
- * that gate and surfaces much later as a hang or a wrong number.
+ * The invariant the whole design rests on: apart from the one module that
+ * captures observations, the projection and reporting path never imports
+ * mineflayer, so replay and the report run with no game present. A doc comment
+ * cannot enforce that, and the later gate that runs replay with the container
+ * stopped cannot detect a leak either -- importing mineflayer does not require
+ * a server, so a leaked import passes that gate and surfaces much later as a
+ * hang or a wrong number.
  *
- * U1 is the unit that establishes this contract, which makes it the cheapest
- * possible moment to guard it: right now there is nothing in src/ to leak.
+ * `observe.ts` is the exception by design: something has to hold the `Bot`, and
+ * concentrating that in one module is exactly what keeps the rest of the path
+ * pure. It is an allowlist rather than a blanket exemption, because the failure
+ * this test exists to catch is a second module quietly joining it.
  */
-test('nothing on the pure path imports mineflayer', () => {
-  const srcDir = new URL('../src/', import.meta.url);
-  const offenders: string[] = [];
+const MINEFLAYER_ALLOWED: readonly string[] = ['observe.ts'];
 
-  for (const entry of readdirSync(srcDir, { recursive: true, encoding: 'utf8' })) {
-    if (!entry.endsWith('.ts')) continue;
-    const body = readFileSync(new URL(entry, srcDir), 'utf8');
-    // Strip comments so prose about mineflayer does not trip the scan.
-    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    if (/\bfrom\s+['"]mineflayer|require\(\s*['"]mineflayer/.test(code)) offenders.push(entry);
-  }
+const SRC_DIR = new URL('../src/', import.meta.url);
+
+function sourceModules(): string[] {
+  return readdirSync(SRC_DIR, { recursive: true, encoding: 'utf8' }).filter((entry) =>
+    entry.endsWith('.ts'),
+  );
+}
+
+function importsMineflayer(entry: string): boolean {
+  const body = readFileSync(new URL(entry, SRC_DIR), 'utf8');
+  // Strip comments so prose about mineflayer does not trip the scan.
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  return /\bfrom\s+['"]mineflayer|require\(\s*['"]mineflayer/.test(code);
+}
+
+test('only the observation module imports mineflayer', () => {
+  const offenders = sourceModules().filter(
+    (entry) => !MINEFLAYER_ALLOWED.includes(entry) && importsMineflayer(entry),
+  );
 
   assert.deepEqual(
     offenders,
     [],
     `these modules import mineflayer and must not: ${offenders.join(', ')}. ` +
-      'Block-world facts belong in RawObservation, captured at observation time.',
+      'Block-world facts belong in RawObservation, captured in observe.ts at observation time, ' +
+      'so that project(), legality(), replay and the report all run with no game present.',
   );
+});
+
+/**
+ * The allowlist is itself asserted, because the cheap way past the test above
+ * is to add a module to it. Widening it then costs an edit to this literal,
+ * which is a line a reviewer reads rather than a constant they scroll past.
+ *
+ * A type-only `import type { Bot } from 'mineflayer'` is erased before Node
+ * runs anything and breaks no offline path, but it still counts here: the scan
+ * stays textual, and the allowlist is where the intent gets recorded.
+ */
+test('the mineflayer allowlist is exactly the observation module', () => {
+  assert.deepEqual(
+    [...MINEFLAYER_ALLOWED],
+    ['observe.ts'],
+    'only observe.ts may hold a Bot. A module added here can no longer run in replay or in the ' +
+      'report, and neither the offline gate nor the type checker will say so.',
+  );
+
+  // A stale entry is the same rot in the other direction: an exemption nothing
+  // is using, which the next module to need one silently inherits.
+  const modules = sourceModules();
+  for (const allowed of MINEFLAYER_ALLOWED) {
+    assert.ok(
+      modules.includes(allowed),
+      `src/${allowed} is allowlisted but does not exist; drop it from MINEFLAYER_ALLOWED`,
+    );
+    assert.ok(
+      importsMineflayer(allowed),
+      `src/${allowed} is allowlisted but no longer imports mineflayer; drop it from the allowlist`,
+    );
+  }
 });
 
 /**
