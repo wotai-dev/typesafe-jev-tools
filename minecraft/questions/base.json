@@ -1,0 +1,35 @@
+{
+  "id": "base",
+  "version": "1.0.0",
+  "description": "The judgment the bot actually runs on. One batched request per decision: the action Choice, plus two speculative Nouls that cost tokens rather than a second round trip. Every criteria entry states the condition under which that answer is right, because jev-1.13 answers the question written rather than the one meant, so a bare label is a bug. Nothing here contains a number: the projection has already turned every quantity into a named band, and the model is asked only to judge.",
+  "questions": {
+    "action": {
+      "type": "choice",
+      "instructions": "A bot is playing Minecraft in survival mode. `state` describes its situation right now, with every quantity already reduced to a named band. The bot can commit to exactly one action for roughly the next second. Which one is the right thing to do?",
+      "criteria": {
+        "flee": "Break away from the threat and put distance between it and the bot. This is right when `nearestThreat` is close enough to land hits and the bot would lose the exchange if it stayed: `health` is `critical` or `low`, or `weapon` is `none`, or `otherThreats` means more attackers than the bot can face at once. Surviving means leaving rather than trading damage.",
+        "fight": "Attack `nearestThreat`. This is right when the threat is hostile, within `melee` range or closing on the bot, `nearestThreat.visible` is true so the bot can actually strike it, and the bot is in shape to win: `health` is `moderate` or `full` and `weapon` is `melee`. Killing the thing in front of the bot ends the danger, where running only postpones it.",
+        "eat": "Eat food the bot is already carrying. This is right when `hunger` is `critical` or `low`, so the bot has stopped regenerating health or is about to take starvation damage, and `foodInInventory` is `some`. Eating leaves the bot standing still and defenceless for a moment, so it is only right when nothing is currently attacking it.",
+        "shelter": "Wall the bot in with blocks, or move into cover, and wait out the danger. This is right when hostile mobs will keep arriving rather than the bot facing one that it can end: `daylight` is `dusk` or `night`, or `light` is `dark`, and `blocks` is `some` so the bot can actually seal itself in. Being unreachable beats winning repeated fights in the dark.",
+        "gather": "Go to `gatherable` and collect it. This is right when nothing is pressing: no hostile within range, `health` and `hunger` are `moderate` or `full`, and `gatherable` is somewhere the bot can reach. A safe moment is worth spending on the materials the bot will need later.",
+        "hold": "Stay put and carry on with `previousAction`, changing nothing. This is right when nothing in `state` calls for a change, or when `previousAction` is a task worth finishing rather than restarting, or when none of the other five actions fits the situation the bot is in."
+      }
+    },
+    "in_danger": {
+      "type": "noul",
+      "instructions": "Reading `state`, is this bot in danger of dying soon if it carries on doing what it is already doing?",
+      "criteria": {
+        "true": "Something in `state` can kill the bot shortly. A hostile `nearestThreat` is within `melee` or `bow` range, or `health` is already `critical`, or `hunger` is `critical` with `foodInInventory` of `none`. Carrying on unchanged ends with the bot dead.",
+        "false": "Nothing in `state` can do the bot serious harm right now. Either there is no hostile in range, or `health` is high enough to absorb what is there, and hunger is not close to killing it."
+      }
+    },
+    "situation_is_ambiguous": {
+      "type": "noul",
+      "instructions": "Two experienced Minecraft players are each shown `state` on its own and asked which single action the bot should take next, without conferring. Would they name different actions?",
+      "criteria": {
+        "true": "The situation genuinely pulls in more than one direction, so more than one action is defensible and which one a player names comes down to their own judgment. For example a hostile is in range while `health` is `low` and `foodInInventory` is `some`, so running, fighting and eating are all reasonable readings of the same moment.",
+        "false": "There is one obviously right action here. Experienced players asked separately would all name the same one, and would be surprised by any of the others."
+      }
+    }
+  }
+}
