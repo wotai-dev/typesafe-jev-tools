@@ -9,6 +9,7 @@
     "node": ">=22.18"
   },
   "scripts": {
+    "lint": "oxlint src test",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
   },
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "oxlint": "^1.85.0",
     "typescript": "^5.6.0"
   }
 }
