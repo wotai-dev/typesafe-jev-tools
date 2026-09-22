@@ -1,0 +1,24 @@
+{
+  "name": "jev-minecraft",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Minecraft bot whose only judgment is a six-way action choice from Jev, plus the harness that measures whether its uncertainty discriminates.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
+    "mineflayer": "^4.39.0",
+    "mineflayer-pathfinder": "^2.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

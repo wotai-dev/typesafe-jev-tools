@@ -1,0 +1,42 @@
+# Every confound this measurement holds constant is a line in this file, so a
+# reviewer can challenge it and a reader can reproduce it. Changing any of them
+# changes what the numbers mean.
+services:
+  minecraft:
+    image: itzg/minecraft-server:2025.9.0
+    container_name: jev-minecraft
+    ports:
+      - "25565:25565"
+    environment:
+      EULA: "TRUE"
+      # Pinned because mineflayer only speaks protocols it has been tested
+      # against. Verified present in mineflayer 4.39.0's `testedVersions`;
+      # `npm test` re-checks it so an upgrade cannot drift the pin silently.
+      VERSION: "1.21.11"
+      # No Mojang auth, so the bot logs in with a bare username.
+      ONLINE_MODE: "false"
+      # Fixed so the world is the same one on every run, for every reader.
+      SEED: "8675309"
+      DIFFICULTY: "normal"
+      MODE: "survival"
+      # The bot needs op to teleport and reset itself between runs.
+      OPS: "jevbot"
+      SPAWN_PROTECTION: "0"
+      VIEW_DISTANCE: "6"
+      MAX_PLAYERS: "4"
+      MEMORY: "2G"
+    volumes:
+      # Named rather than anonymous: U5's calibration pilot has to delete this
+      # volume between the pilot and the measured run, and it needs a handle.
+      - jev-minecraft-data:/data
+    healthcheck:
+      test: ["CMD", "mc-health"]
+      start_period: 90s
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+volumes:
+  jev-minecraft-data:
+    name: jev-minecraft-data
