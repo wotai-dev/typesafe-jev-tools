@@ -98,6 +98,94 @@ enough to tune in one line, and the log now makes its error rate something you c
 argue about. If it fires on your `scoreLead` and the answer is arithmetic, that is the tool working
 as designed and costing you one sentence.
 
+## Letting Jev judge
+
+The section above convicts the regexes: they match names, so they cannot tell
+`scoreLead = (l) => l.email ? 10 : 0` from a real judgment. The fix is the thing this hook spends
+its whole output recommending. **Classifying the decision is itself a band-three question** — a
+person shown the code answers in under a second — so the regex is the cheap gate and Jev is the
+judge on the rows it flags.
+
+**This is off unless a key is found.** With no key the hook behaves exactly as documented above and
+nothing leaves your machine.
+
+### Turning it on
+
+```bash
+# any one of these; checked in this order
+export TYPESAFE_API_KEY=...                      # environment
+echo 'TYPESAFE_API_KEY=...' > .claude/typesafe-check.env
+echo 'TYPESAFE_API_KEY=...' >> .env.local        # gitignore it
+
+TYPESAFE_CHECK_JUDGE=0   # disable the judge, keep the gate
+```
+
+Needs `curl` in addition to `bash`, `jq` and `grep`. If `curl` is missing, the key is absent, the
+request times out (4s), the API returns non-200, or the JSON will not parse, the hook falls back to
+the gate-only advisory. Measured with a deliberately invalid key: 0.46s, no hang, correct fallback.
+
+> **It sends code to a third party.** When the judge is on, the matched region of the code you are
+> writing is POSTed to `api.typesafe.ai`. That is a real change from the hermetic version — decide
+> deliberately, and do not enable it in a repo whose source you cannot send anywhere.
+
+### What it does with the answer
+
+One request, three questions against one `state` (the [Speculative Fan-Out][fanout] pattern — extra
+questions are evaluated in parallel, so they ride along free): a `band` **Choice** over
+`plain_code` / `system_one` / `frontier_model`, plus two **Noul** probabilities, `semantic` ("does
+this code decide what some text means") and `mechanical` ("is the result fully determined by
+arithmetic, a field check, a regex or a lookup").
+
+[fanout]: https://docs.typesafe.ai/patterns
+
+Measured on five shapes:
+
+| code | `semantic` | `mechanical` | band | conf |
+|---|---|---|---|---|
+| `scoreLead = l.email ? 10 : 0` | 0.08 | high | `plain_code` | 0.97 |
+| `classifyTone(msg)` | 0.93 | low | `system_one` | 0.71 |
+| `planMigration(schema, constraints)` | 0.48 | low | `frontier_model` | 0.96 |
+| `detectUrl` (a regex test) | 0.17 | high | `plain_code` | 1.00 |
+| `relevanceOf(query, doc)` | 0.84 | low | `system_one` | **0.37** |
+
+Which becomes:
+
+- **Confident verdict** (≥0.7) — the advisory states the band and the confidence instead of making
+  you walk the test. `frontier_model` says plainly that a System One model is the wrong tool.
+- **Gate false positive** — `plain_code`, `semantic` < 0.35, `mechanical` > 0.65, confidence ≥ 0.7
+  collapses eight lines to one: *a name looked like a decision, Jev judged it plain code, carry on.*
+- **Low confidence** — the last row. The hook says "Jev was unsure here (system_one at only 0.37),
+  so decide it yourself" and falls back to the full test. That row is the best argument for the
+  design: a tool that asserted `system_one` at 0.37 would be worse than the regex, and the whole
+  premise of this repo is that knowing when not to trust the answer is the product.
+
+Cost is bounded by construction: the judge runs only in authoring mode, only after the
+once-per-file-per-session gate, on a ~1500-character snippet. About 500 input tokens per firing,
+which at $0.042/Mtok with free output is roughly **$0.00002** a time.
+
+### Three things Jev's own jaggedness page changed
+
+[`/model-jaggedness/jev-1.13`](https://docs.typesafe.ai/model-jaggedness/jev-1.13) is short, and
+reading it after building the first version rewrote three decisions. Worth copying the habit: read
+the model's stated weaknesses before trusting it in a loop.
+
+- *"Accuracy falls as the state grows with content unrelated to the decision. Unrelated detail acts
+  as a distractor."* The first version sent `head -c 4000` of the payload. It now sends the matched
+  region — the lines the gate hit plus a little context. A blind prefix is a distractor generator.
+- *"Scoping words, negations, and implied conditions are read at face value"*, and double negatives
+  or indirection answer less reliably. The first version asked one contrastive question ("about
+  meaning **as opposed to** mechanical") and used criteria like "No model is needed". Both are now
+  positive and single-barreled, and the contrast became two independent Nouls.
+- *"Does not treat data as hostile by default. Content written to adversarially steer the model can
+  move the answer."* The first version let a confident `plain_code` **suppress** the advisory. The
+  `state` is the code being written, so a comment could have silenced the hook — the exact silent
+  failure this file spends three sections warning about. Suppression is gone; the shortest the hook
+  ever gets is one line.
+
+Every firing logs its verdict to `.claude/typesafe-check.log` — `judge`, `band`, `conf`, `sem`,
+`mech`, and whether the output was `full` or `brief` — so the judge's own agreement rate with the
+gate is something you can count after a week.
+
 ## Three bugs worth knowing about
 
 All three passed every piped test and did nothing useful against a real file. If you write your own
