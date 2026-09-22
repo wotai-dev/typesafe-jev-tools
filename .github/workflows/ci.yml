@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+    # `ready_for_review` is NOT in the default set. Without it, marking a draft
+    # ready fires nothing and required checks sit pending forever.
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+# `npm ci` runs install scripts from the whole transitive tree on every PR.
+# Nothing here needs more than read access to the checkout.
+permissions:
+  contents: read
+
+# Cancel superseded runs on PR branches, never on the default branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  minecraft:
+    name: typecheck + tests
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: minecraft
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches engines.node in minecraft/package.json. mineflayer 4.39.0
+          # requires >=22, but `node --test` only strips TypeScript types
+          # without a flag from 22.18 on, so 22.18 is the real floor.
+          node-version: '22.18'
+          cache: npm
+          cache-dependency-path: minecraft/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - run: npm test

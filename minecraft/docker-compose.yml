@@ -1,0 +1,55 @@
+# Every confound this measurement holds constant is a line in this file, so a
+# reviewer can challenge it and a reader can reproduce it. Changing any of them
+# changes what the numbers mean.
+services:
+  minecraft:
+    image: itzg/minecraft-server:2025.9.0
+    container_name: jev-minecraft
+    ports:
+      # Loopback only. ONLINE_MODE is false and OPS grants operator to whoever
+      # logs in as jevbot, so a 0.0.0.0 bind would hand op to anyone who can
+      # reach this machine on 25565 -- and on Linux a Docker port publish
+      # bypasses host firewall rules. The bot connects to localhost.
+      - "127.0.0.1:25565:25565"
+    environment:
+      EULA: "TRUE"
+      # Pinned because mineflayer only speaks protocols it has been tested
+      # against. Verified present in mineflayer 4.39.0's `testedVersions`;
+      # `npm test` re-checks it so an upgrade cannot drift the pin silently.
+      VERSION: "1.21.11"
+      # No Mojang auth, so the bot logs in with a bare username.
+      ONLINE_MODE: "false"
+      # Fixed so the world is the same one on every run, for every reader.
+      SEED: "8675309"
+      DIFFICULTY: "normal"
+      MODE: "survival"
+      # The bot needs op to teleport and reset itself between runs.
+      #
+      # This is jevbot's OFFLINE-mode UUID, not a name. With ONLINE_MODE false
+      # the username is not a Mojang account, so the image's attempt to resolve
+      # a name against PlayerDB fails and the container exits 1 before the world
+      # is ever generated. Offline UUIDs are computed locally, as UUID v3 over
+      # MD5("OfflinePlayer:<name>"), so there is nothing to look up. `npm test`
+      # recomputes this from the username and asserts it still matches.
+      OPS: "9453f57e-d5a0-393b-a2ef-78c7d18e9ab7"
+      SPAWN_PROTECTION: "0"
+      VIEW_DISTANCE: "6"
+      MAX_PLAYERS: "4"
+      MEMORY: "2G"
+    volumes:
+      # Named so U5's calibration pilot can delete it between the pilot and the
+      # measured run. Deliberately NOT given a top-level `name:` -- that would
+      # strip the compose project prefix and make one global volume shared by
+      # every clone and worktree, so a stale world from another checkout would
+      # be reused silently. `docker compose down -v` removes it either way.
+      - jev-minecraft-data:/data
+    healthcheck:
+      test: ["CMD", "mc-health"]
+      start_period: 90s
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: "no"
+
+volumes:
+  jev-minecraft-data:
