@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "^0.6.0",
