@@ -2,8 +2,17 @@
 # PreToolUse(Write|Edit): when code being written contains a semantic decision,
 # surface the code-vs-frontier-vs-System-One test and the branch it implies.
 #
-# Advisory only - never blocks. Tune TRIGGERS below; that is the whole job.
-# Disable with: /hooks, or delete the entry from .claude/settings.json
+# Two stages. The regexes are the CHEAP GATE - they are name heuristics and they
+# are wrong in both directions. When a key is available, Jev is the JUDGE on the
+# rows the gate flags: it names the band with a confidence, and on the gate's
+# false positives it shortens the advisory to one line. It never silences it.
+# This is the repo's own argument applied to itself - classifying the decision is
+# a band-3 question (a person answers it in under a second from code you can show
+# them), so a regex alone cannot do it, and the regex is the cheap gate in front.
+#
+# Advisory only - never blocks, and never fails closed. No key, no curl, a
+# timeout, a non-200, or unparseable JSON all fall back to the gate-only text.
+# Disable the judge with TYPESAFE_CHECK_JUDGE=0. Disable the hook with /hooks.
 set -uo pipefail
 
 payload=$(cat)
@@ -25,9 +34,6 @@ new=$(printf '%s' "$payload" | jq -r '
 # Class A: an LLM call that may be overqualified for the judgment it makes.
 A='anthropic|@anthropic-ai|openai|messages\.create|chat\.completions|responses\.create|generateText'
 # Class B, split so the advice can name the right primitive instead of guessing.
-# These are NAME heuristics and they are wrong in both directions - see the
-# README section "The hook is itself a band-one heuristic". Tighten before
-# loosening: a hook that fires on everything gets disabled inside a day.
 B_CHOICE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(classif|categoriz|route|detect|triage)'
 B_SCORE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(score|rank|relevan)'
 
@@ -93,12 +99,99 @@ mark="$mark_dir/$(printf '%s|%s' "$path" "$mode" | cksum | tr -d ' ')"
 [ -f "$mark" ] && exit 0
 mkdir -p "$mark_dir" 2>/dev/null && : > "$mark" 2>/dev/null || true
 
-# Log every firing so this hook's own precision is measurable. The README
-# measures Jev across 2,400 calls; measuring the instrument is the same duty.
+# ---------------------------------------------------------------------------
+# The judge. Only on `author` (pre-existing already gets one line, so there is
+# nothing a verdict would change), only after dedupe, so at most one call per
+# file per session. Everything here is best-effort: any failure leaves
+# judge="off" and the gate-only text below is what ships.
+#
+# PRIVACY: this sends the code being authored to api.typesafe.ai. It is off
+# unless a key is found. See the README section "Letting Jev judge".
+# ---------------------------------------------------------------------------
+judge="off"; jband=""; jconf=""; jsem=""; jmech=""
+if [ "$mode" = "author" ] && [ "${TYPESAFE_CHECK_JUDGE:-1}" != "0" ] && command -v curl >/dev/null 2>&1; then
+  key="${TYPESAFE_API_KEY:-}"
+  if [ -z "$key" ]; then
+    for f in "${CLAUDE_PROJECT_DIR:-.}/.claude/typesafe-check.env" "${CLAUDE_PROJECT_DIR:-.}/.env.local"; do
+      [ -r "$f" ] || continue
+      key=$(sed -n 's/^[[:space:]]*TYPESAFE_API_KEY[[:space:]]*=[[:space:]]*//p' "$f" | tr -d '"'\''' | head -1)
+      [ -n "$key" ] && break
+    done
+  fi
+  if [ -n "$key" ]; then
+    # Jev's documented jaggedness includes context bloat: "accuracy falls as the
+    # state grows with content unrelated to the decision. Unrelated detail acts as
+    # a distractor." So send the matched REGION, not a blind prefix - the lines the
+    # gate hit plus a little context, capped. Falls back to the head if extraction
+    # yields nothing.
+    snip=$(grep -nE "$A|$B_CHOICE|$B_SCORE" <<< "$new" 2>/dev/null | cut -d: -f1 | head -8 |
+      while IFS= read -r n; do
+        sed -n "$(( n>3 ? n-3 : 1 )),$(( n+8 ))p" <<< "$new"
+      done | head -c 1500)
+    [ -z "${snip//[[:space:]]/}" ] && snip=$(printf '%s' "$new" | head -c 1500)
+    req=$(jq -n --arg state "$snip" '{
+      state: $state, model: "jev-latest",
+      questions: {
+        semantic: { type: "noul", instructions:
+          "This is source code. Does this code decide what some text means, such as its sentiment, intent, category, or relevance?" },
+        mechanical: { type: "noul", instructions:
+          "This is source code. Is the result fully determined by arithmetic, field presence, string equality, a regular expression, or a lookup?" },
+        band: { type: "choice", instructions:
+          "This is source code that makes a decision. Which approach fits that decision best?",
+          criteria: {
+            plain_code: "A regular expression, string comparison, arithmetic, field check, or a database lookup produces the same answer.",
+            system_one: "A person reading the text would answer in under a second, and the answer is a typed judgment about that text.",
+            frontier_model: "The answer requires multi-step reasoning, specialist domain knowledge, or written prose." } }
+      }}')
+    resp=$(curl -sS --max-time 4 -X POST https://api.typesafe.ai/v1/systemone \
+             -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+             -d "$req" 2>/dev/null) || resp=""
+    if [ -n "$resp" ]; then
+      jband=$(jq -r '.answers.band.choice      // empty' <<< "$resp" 2>/dev/null)
+      jconf=$(jq -r '.answers.band.confidence  // empty' <<< "$resp" 2>/dev/null)
+      jsem=$( jq -r '.answers.semantic.noul    // empty' <<< "$resp" 2>/dev/null)
+      jmech=$(jq -r '.answers.mechanical.noul  // empty' <<< "$resp" 2>/dev/null)
+      [ -n "$jband" ] && [ -n "$jconf" ] && judge="on"
+    fi
+    unset key req resp
+  fi
+fi
+
+# The gate matched a NAME; the judge says this code decides nothing about meaning
+# and is fully determined mechanically. That is the gate's documented false
+# positive (`scoreLead = l.email ? 10 : 0` measures semantic=0.08, plain_code at
+# 0.99). The advisory is DOWNGRADED to one line - it is never suppressed.
+#
+# Suppression was the original design and it is wrong. Jev's jaggedness page says
+# it "does not treat data as hostile by default. Content written to adversarially
+# steer the model can move the answer", and the state here is the code being
+# written. If a model verdict could silence this hook, a comment could too - and a
+# hook that goes quiet because something in the input said so is the precise
+# silent-failure class this repo exists to warn about. One short line cannot be
+# weaponised into a hidden warning, and it is still ~8 lines less noise.
+brief=""
+if [ "$judge" = "on" ] && [ "$jband" = "plain_code" ]; then
+  awk -v s="${jsem:-1}" -v m="${jmech:-0}" -v k="$jconf" \
+      'BEGIN{exit !(s<0.35 && m>0.65 && k>=0.70)}' && brief=1
+fi
+
 log="${CLAUDE_PROJECT_DIR:-.}/.claude/typesafe-check.log"
 { mkdir -p "$(dirname "$log")" 2>/dev/null &&
-  printf '%s\t%s\ta=%s\tchoice=%s\tscore=%s\t%s\n' \
-    "$(date -u +%FT%TZ)" "$mode" "${a:-0}" "${c:-0}" "${s:-0}" "$path" >> "$log"; } 2>/dev/null || true
+  printf '%s\t%s\ta=%s\tchoice=%s\tscore=%s\tjudge=%s\tband=%s\tconf=%s\tsem=%s\tmech=%s\t%s\t%s\n' \
+    "$(date -u +%FT%TZ)" "$mode" "${a:-0}" "${c:-0}" "${s:-0}" "$judge" \
+    "${jband:--}" "${jconf:--}" "${jsem:--}" "${jmech:--}" \
+    "${brief:+brief}${brief:-full}" "$path" >> "$log"; } 2>/dev/null || true
+
+# The one-line form: the gate was wrong, say so and get out of the way.
+if [ -n "$brief" ]; then
+  jq -n --arg path "$(basename "$path")" --arg conf "$jconf" '{
+    systemMessage: ("TypeSafe check: \($path) - Jev says plain code (\($conf))."),
+    hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: (
+      "A name in \($path) looked like a semantic decision, but Jev judged it plain code at " +
+      "confidence \($conf): the result is mechanically determined. No model needed. Carry on."
+    ) } }'
+  exit 0
+fi
 
 if [ "$mode" = "preexisting" ]; then
   jq -n --arg path "$(basename "$path")" --arg hit "$hit" '{
@@ -116,24 +209,47 @@ if [ "$mode" = "preexisting" ]; then
   exit 0
 fi
 
-jq -n --arg path "$(basename "$path")" --arg hit "$hit" --arg prim "$primitive" '{
-  systemMessage: ("TypeSafe check: \($path) adds \($hit)."),
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    additionalContext: (
-      "You are writing \($hit) in \($path). Apply the three-way test:\n" +
-      "1. A regex, DNS lookup or DB query can answer it -> write the code. Do not call a model.\n" +
-      "2. It needs multi-step reasoning, domain knowledge or generated prose -> frontier model.\n" +
-      "3. A sensible person answers it in under a second from text you can show them -> the " +
-      "System One band, where TypeSafe/Jev sits.\n" +
-      (if $prim != "" then
-        "If band 3, this reads as \($prim). " else
-        "If band 3: " end) +
-      "The confidence value is the whole point - code that ignores it gains nothing from a " +
-      "calibrated model. Gate on it per consequence, not with one global number: above ~0.9 act, " +
-      "0.5 to 0.9 confirm or flag for review, below 0.5 do not act - route to a human. Send " +
-      "several questions against one shared `state` in a single request rather than looping.\n" +
-      "State the verdict in one line, then proceed."
-    )
-  }
-}'
+jq -n --arg path "$(basename "$path")" --arg hit "$hit" --arg prim "$primitive" \
+      --arg judge "$judge" --arg band "$jband" --arg conf "$jconf" --arg sem "$jsem" '
+  ($conf | tonumber? // 0) as $k |
+  {
+    systemMessage: (
+      if $judge == "on" then "TypeSafe check: \($path) - Jev says \($band) (confidence \($conf))."
+      else "TypeSafe check: \($path) adds \($hit)." end),
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      additionalContext: (
+        (if $judge == "on" and $k >= 0.7 then
+          "Jev judged the decision in \($path): **\($band)**, confidence \($conf) " +
+          "(semantic \($sem)). " +
+          (if $band == "plain_code" then
+            "Write the code. A regex, comparison, or lookup answers this - do not call a model."
+           elif $band == "frontier_model" then
+            "This needs multi-step reasoning, domain knowledge or generated prose. A System One " +
+            "model is the wrong tool; use a frontier model."
+           else
+            "This is the System One band. " +
+            (if $prim != "" then "It reads as \($prim). " else "" end) +
+            "The confidence value is the whole point - code that ignores it gains nothing from a " +
+            "calibrated model. Gate on it per consequence, not with one global number: above ~0.9 " +
+            "act, 0.5 to 0.9 confirm or flag for review, below 0.5 do not act - route to a human. " +
+            "Send several questions against one shared `state` in a single request rather than " +
+            "looping." end) +
+          "\nState the verdict in one line, then proceed."
+        else
+          (if $judge == "on" then
+            "Jev was unsure here (\($band) at only \($conf)), so decide it yourself. " else "" end) +
+          "You are writing \($hit) in \($path). Apply the three-way test:\n" +
+          "1. A regex, DNS lookup or DB query can answer it -> write the code. Do not call a model.\n" +
+          "2. It needs multi-step reasoning, domain knowledge or generated prose -> frontier model.\n" +
+          "3. A sensible person answers it in under a second from text you can show them -> the " +
+          "System One band, where TypeSafe/Jev sits.\n" +
+          (if $prim != "" then "If band 3, this reads as \($prim). " else "If band 3: " end) +
+          "The confidence value is the whole point - code that ignores it gains nothing from a " +
+          "calibrated model. Gate on it per consequence: above ~0.9 act, 0.5 to 0.9 confirm or " +
+          "flag, below 0.5 route to a human. Send several questions against one shared `state` in " +
+          "one request rather than looping.\n" +
+          "State the verdict in one line, then proceed." end)
+      )
+    }
+  }'
