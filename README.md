@@ -46,21 +46,64 @@ restart the session.
 
 ## What trips it
 
-Only these extensions: `.ts` `.tsx` `.mts` `.js` `.mjs` `.py`. Everything else exits immediately,
-which is what keeps it usable in a repo full of Markdown.
+Only these extensions: `.ts` `.tsx` `.cts` `.mts` `.js` `.jsx` `.cjs` `.mjs` `.py`. Everything else
+exits immediately, which is what keeps it usable in a repo full of Markdown.
 
-Two trigger classes, both at the top of the script:
+Three trigger classes, all at the top of the script:
 
 ```bash
-A='anthropic|@anthropic-ai|openai|messages\.create|chat\.completions|generateText'
-B='(function|def|const|let|async def)[[:space:]]+[a-zA-Z_]*(classif|categoriz|score|rank|route|detect|triage|relevan)'
+A='anthropic|@anthropic-ai|openai|messages\.create|chat\.completions|responses\.create|generateText'
+B_CHOICE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(classif|categoriz|route|detect|triage)'
+B_SCORE='(function|def|const|let|var|async def)[[:space:]]+[a-zA-Z_]*(score|rank|relevan)'
 ```
 
-**Tune these. That is the whole job.** `B` is the looser of the two, so tighten it first if the
-hook gets noisy. A hook that fires on everything gets disabled inside a day, which costs you more
-than never installing it.
+`B` is split in two so the advice can name the right primitive — a `classify*`/`route*`/`triage*`
+name reads as a **Choice** (a typed option), a `score*`/`rank*`/`relevance*` name as a **Score** (a
+graded level). Both return `probabilities` and a 0-1 `confidence`; the hook quotes the thresholds
+rather than the product, because code that ignores the confidence value gains nothing from a
+calibrated model.
 
-## The bug worth knowing about
+**Tune these. That is the whole job.** The `B` classes are looser than `A`, so tighten those first
+if the hook gets noisy. A hook that fires on everything gets disabled inside a day, which costs you
+more than never installing it.
+
+### It fires on authoring, not on reading
+
+The two signals are kept apart. A trigger in the tool payload means you are **writing** the decision
+right now — the only moment the three-way test can change anything — and gets the full test. A
+trigger found *only* in the file on disk means the decision already existed and this edit did not
+add it; that gets one line and no lecture. Collapsing the two is why an earlier version nagged on
+every unrelated edit to any file that happened to contain `openai` anywhere.
+
+It also fires **once per file, per mode, per session**. Nothing in the original design stopped it
+repeating the identical paragraph fifty times about one file, and that, not inaccuracy, is what gets
+a hook uninstalled.
+
+Every firing appends a line to `.claude/typesafe-check.log` — timestamp, mode, which classes hit,
+path. The point is that this hook's own precision should be measurable. Measuring Jev across 2,400
+calls and the instrument not at all would be the same mistake band one warns about.
+
+### The hook is itself a band-one heuristic
+
+Worth saying plainly, because the three-way test convicts it. `B_CHOICE` and `B_SCORE` match
+**identifiers**. They cannot tell `scoreLead = (l) => l.email ? 10 : 0` — arithmetic on a field —
+from a genuine semantic judgment, and they miss `assessSentiment`, `gradeAnswer`, `pickHandler`,
+`bucketize`. It is a name-based heuristic detecting name-based heuristics, measured against no
+labels: exactly the band-one device the first rule tells you not to build.
+
+That is a deliberate trade, not an oversight. The alternative — asking a model whether the code you
+are about to write contains a semantic decision — is a model call on every keystroke to decide
+whether you should make a model call. The regex is wrong in both directions, cheap, and legible
+enough to tune in one line, and the log now makes its error rate something you can count instead of
+argue about. If it fires on your `scoreLead` and the answer is arithmetic, that is the tool working
+as designed and costing you one sentence.
+
+## Three bugs worth knowing about
+
+All three passed every piped test and did nothing useful against a real file. If you write your own
+`Write|Edit` hook that inspects content, you probably have at least one of them.
+
+### 1. Reading only the replacement text
 
 The first version only read `tool_input.new_string`. It passed every piped test and then did
 nothing useful.
@@ -79,7 +122,49 @@ $(head -c 200000 "$path" 2>/dev/null)"
 fi
 ```
 
-If you write your own `Write|Edit` hook that inspects content, you probably have this bug.
+### 2. A whitespace check that blows the timeout
+
+Emptiness was tested with `[ -z "${content//[[:space:]]/}" ]`. Bash pattern substitution with a
+character class is super-linear over a long string, and the hook feeds it up to 200KB:
+
+| Content | Time |
+|---|---|
+| 500 B | 0.03s |
+| 2 KB | 0.56s |
+| 4 KB | 3.55s |
+| 8 KB | >25s |
+
+`settings.example.json` sets `timeout: 10` and the registered command ends in `|| true`, so on any
+ordinary source file the hook burned its whole budget and then had the kill swallowed. No output, no
+error, ~10s added to every write. Measured 12.02s on a 340KB file; 0.09s after the fix.
+
+```bash
+case "$content" in *[![:space:]]*) ;; *) exit 0 ;; esac
+```
+
+The check was redundant anyway — whitespace-only content matches neither class and exits two lines
+later. It was only ever saving two forks.
+
+### 3. `printf | grep -q` throwing the answer away
+
+Both classes were tested as `printf '%s' "$content" | grep -qiE "$A" && hit=...`, under
+`set -o pipefail`. `grep -q` exits on the first match while `printf` still has the rest of the file
+to write, so `printf` takes SIGPIPE, the **pipeline returns 141**, and `&&` never fires. The match is
+found and discarded. The threshold is the 64KB pipe buffer:
+
+```text
+ 64000 bytes -> status=0   hit=[SET]
+ 96000 bytes -> status=141 hit=[EMPTY]
+```
+
+Fix is a herestring, which is a file rather than a pipe, so no reader closes early:
+
+```bash
+grep -qiE "$A" <<< "$content" && hit="an LLM call"
+```
+
+This one was **masked** by bug 2 — the script timed out before reaching the greps — so fixing the
+timeout alone trades a dead hook for a lying one. They have to be fixed together.
 
 ## Why a hook and not a line in AGENTS.md
 
@@ -152,9 +237,37 @@ Two more tasks, Jev against Haiku only:
 
 Accuracy splits. Latency does not.
 
-TypeSafe has not published pricing. `/pricing` and `/limits` both 404 as of 2026-09-18, so the
-"40 to 1,000x cheaper" claim is not currently checkable. Measured speed was 1.4x to 3.7x depending
-on the comparison, against a claimed 20 to 200x.
+TypeSafe has published pricing since this was first written. It is on the docs site, not the
+marketing site: [`docs.typesafe.ai/models.md`](https://docs.typesafe.ai/models.md), verified
+2026-09-21. One model, `jev-1.13.0`, at **$42 per billion input tokens** — $0.042 per million — and
+**output tokens are free**. Limits on the same page: 250,000 tokens/second, 1,200 requests/minute,
+64k context per request, 32k for `state` plus the longest question. `typesafe.ai/pricing`,
+`typesafe.ai/models` and `/limits` all still 404, which is why the earlier note said there was none.
+
+That makes the cheapness claim checkable, against Anthropic's published input rates:
+
+| vs | Input $/Mtok | Jev is |
+|---|---|---|
+| Claude Fable 5.1 | $10.00 | 238.1x cheaper |
+| Claude Opus 5 | $5.00 | 119.0x cheaper |
+| Claude Sonnet 5 | $2.00 | 47.6x cheaper |
+| Claude Haiku 4.5 | $1.00 | **23.8x cheaper** |
+
+TypeSafe's own "238x lower input price than Claude Fable 5.1" reproduces exactly. The advertised
+**"40 to 1,000x cheaper" range does not hold at its floor**: against Haiku 4.5 — the cheapest Claude,
+and the only one Jev beats on latency in the sub-second table above — it is 23.8x, not 40x. Free
+output widens the real gap on output-heavy work, but this task returns a single probability, so input
+dominates and the input-only comparison is the honest one here.
+
+Jev's `Cost / 150` cell above stays empty because the per-passage token counts came from a harness
+that is not in this repo. The published rate does bound it: if every cent of Haiku's measured $0.064
+were input at $1.00/Mtok, that is at most 64,000 input tokens, so at most **$0.0027** for the same
+150 rows with output free — which would put Jev at roughly the same cost as `deepseek-v4-flash`, the
+cheapest measured row. A bound is not a measurement, so it is not in the table.
+
+Measured speed was 1.4x to 3.7x depending on the comparison. The homepage claims 193.6x faster and
+244.6x cheaper on "System One tasks", illustrated with a workflow at $0.000081 in 0.114s against
+$0.013880 in 8.566s — neither figure is reproduced by anything measured here.
 
 DeepSeek, GLM and Kimi ran through OpenRouter. GPT-5 cost cells are empty because I have no rate
 card I can cite for them, and an empty cell beats a guess.
