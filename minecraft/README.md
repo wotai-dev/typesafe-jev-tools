@@ -37,16 +37,28 @@ Honest gaps, in the root README's spirit that an empty cell beats a guess:
   benchmark. Each decision here batches a six-option Choice carrying per-action criteria plus two
   Nouls over a fixed-slot state, so the real p50 may be higher — and both the run's record count
   and its stated cost move with it. U3 measures it on a live call rather than assuming it.
-- **Nothing has run against a live server yet.** At the time of this commit the scaffold is
-  verified by typecheck and by the pin test. The compose smoke check — container healthy, a bare
-  client connects and reports coordinates — had not been run on the authoring machine, which was
-  out of memory. It is the first thing to do on a machine that can spare 2GB.
+- **The bot's health and food are `undefined` at the moment it spawns.** Observed in the smoke
+  check: the server sends the health packet shortly after the spawn event, not with it. `observe()`
+  has to wait for it or handle the gap, or the first projected states of every run carry a bogus
+  health band.
 - **Whether Jev returns different distributions for identical requests is unknown.** If it is
   deterministic, the self-agreement column is 1.000 by construction and measures nothing. One
   extra live call in U3 settles it.
 - **Inter-rater agreement is not measured** unless a second labeler is available. The reason this
   project uses Minecraft rather than text is that a survival situation *looks* legible to anyone —
   and with one labeler that remains an assumption, not a result.
+
+## What has been checked
+
+Verified 2026-09-21 on the pinned compose file: `docker compose up -d` reaches `healthy` in about
+80 seconds on first run (world generation included), and a bare mineflayer client connects, spawns
+and reports `1.21.11` at `x=20.5 y=64.0 z=83.5` on seed `8675309`.
+
+That run also caught the one thing the config got wrong. `OPS` was a bare username, and on an
+offline-mode server the image asks PlayerDB to resolve it — which cannot work, because the whole
+point of offline mode is that the account does not exist. The container exited 1 before generating
+a world. `OPS` now carries the offline UUID, and `npm test` recomputes it so renaming the bot
+cannot silently leave it unopped.
 
 ## Layout
 

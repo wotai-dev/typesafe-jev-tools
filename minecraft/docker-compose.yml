@@ -20,7 +20,14 @@ services:
       DIFFICULTY: "normal"
       MODE: "survival"
       # The bot needs op to teleport and reset itself between runs.
-      OPS: "jevbot"
+      #
+      # This is jevbot's OFFLINE-mode UUID, not a name. With ONLINE_MODE false
+      # the username is not a Mojang account, so the image's attempt to resolve
+      # a name against PlayerDB fails and the container exits 1 before the world
+      # is ever generated. Offline UUIDs are computed locally, as UUID v3 over
+      # MD5("OfflinePlayer:<name>"), so there is nothing to look up. `npm test`
+      # recomputes this from the username and asserts it still matches.
+      OPS: "9453f57e-d5a0-393b-a2ef-78c7d18e9ab7"
       SPAWN_PROTECTION: "0"
       VIEW_DISTANCE: "6"
       MAX_PLAYERS: "4"

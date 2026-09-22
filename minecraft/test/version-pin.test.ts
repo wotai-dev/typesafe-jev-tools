@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 const require_ = createRequire(import.meta.url);
@@ -42,7 +43,6 @@ test('the compose file holds the stated measurement confounds constant', () => {
     ['ONLINE_MODE', 'false'],
     ['DIFFICULTY', 'normal'],
     ['MODE', 'survival'],
-    ['OPS', 'jevbot'],
   ];
 
   for (const [key, expected] of fixed) {
@@ -59,5 +59,40 @@ test('the compose file holds the stated measurement confounds constant', () => {
     compose,
     /^\s*SEED:\s*"\d+"/m,
     'SEED must be pinned to a fixed value so every run gets the same world',
+  );
+});
+
+/**
+ * On an ONLINE_MODE=false server the bot's username is not a Mojang account,
+ * so the image cannot resolve a name to a UUID -- it asks PlayerDB, the lookup
+ * fails, and the container exits 1 before the world is generated. Offline
+ * UUIDs are derived locally instead, so OPS must carry the UUID.
+ *
+ * Recomputed here rather than hard-coded: renaming the bot without updating
+ * OPS would otherwise silently leave it unopped, and it cannot then reset
+ * itself between the calibration pilot and the measured run.
+ */
+test('OPS carries the bot username as an offline UUID, not a name', () => {
+  const envExample = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  const username = envExample.match(/^MC_USERNAME=(.+)$/m)?.[1]?.trim();
+  assert.ok(username, '.env.example must set MC_USERNAME — it is what OPS has to match');
+
+  const hash = createHash('md5').update(`OfflinePlayer:${username}`).digest();
+  hash[6] = (hash[6]! & 0x0f) | 0x30; // version 3
+  hash[8] = (hash[8]! & 0x3f) | 0x80; // IETF variant
+  const hex = hash.toString('hex');
+  const expected = [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join('-');
+
+  assert.equal(
+    composeValue('OPS'),
+    expected,
+    `OPS must be the offline UUID for "${username}" (${expected}). A bare username makes the ` +
+      'image query PlayerDB, which cannot resolve an offline account, and the container exits 1.',
   );
 });
