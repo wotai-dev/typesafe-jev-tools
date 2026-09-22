@@ -236,9 +236,21 @@ if [ "$mode" = "preexisting" ]; then
   exit 0
 fi
 
+# Confidence-gated routing, both axes. The band and the Nouls are separate
+# questions in one response, so the band being unsure does not mean the answer is
+# unknown - the Noul pair is often decisive when the band is not. Measured: every
+# `plain_code` row lands at 0.96-0.98 with decisive Nouls, while `system_one` vs
+# `frontier_model` genuinely hedges (0.22-0.71) because that is the harder call.
+# Ruling out band 1 on a decisive Noul pair is worth more than reprinting the
+# generic test, because band 1 is the band the operator most needs ruled out.
 jq -n --arg path "$(basename "$path")" --arg hit "$hit" --arg prim "$primitive" \
-      --arg judge "$judge" --arg band "$jband" --arg conf "$jconf" --arg sem "$jsem" '
-  ($conf | tonumber? // 0) as $k |
+      --arg judge "$judge" --arg band "$jband" --arg conf "$jconf" --arg sem "$jsem" \
+      --arg mech "$jmech" '
+  ($conf | tonumber? // 0)  as $k |
+  ($sem  | tonumber? // -1) as $sv |
+  ($mech | tonumber? // -1) as $mv |
+  ($judge == "on" and $k < 0.7 and $sv > 0.65 and $mv < 0.35) as $meaningful |
+  ($judge == "on" and $k < 0.7 and $sv < 0.35 and $mv > 0.65) as $mechanical |
   {
     systemMessage: (
       if $judge == "on" then "TypeSafe check: \($path) - Jev says \($band) (confidence \($conf))."
@@ -263,6 +275,22 @@ jq -n --arg path "$(basename "$path")" --arg hit "$hit" --arg prim "$primitive" 
             "Send several questions against one shared `state` in a single request rather than " +
             "looping." end) +
           "\nState the verdict in one line, then proceed."
+        elif $meaningful then
+          "Jev could not separate the bands here (\($band) at only \($conf)), but it is confident " +
+          "about the part that matters most: the purpose of this code is to judge what text means, " +
+          "not to compute over its structure (semantic \($sem), mechanical \($mech)). **Band 1 is " +
+          "ruled out** - do not reach for a regex or a lookup. Choose between System One and a " +
+          "frontier model on one question: does answering need multi-step reasoning, domain " +
+          "expertise or generated prose, or would a person answer it in under a second? " +
+          (if $prim != "" then "If System One, it reads as \($prim). " else "" end) +
+          "Branch on the confidence either way: above ~0.9 act, 0.5 to 0.9 confirm, below 0.5 route " +
+          "to a human.\nState the verdict in one line, then proceed."
+        elif $mechanical then
+          "Jev could not settle the band (\($band) at only \($conf)), but it is confident this is " +
+          "mechanically determined rather than a judgment about meaning (semantic \($sem), " +
+          "mechanical \($mech)). That points at band 1: write the code, and do not call a model " +
+          "unless you can say what judgment it would be making.\nState the verdict in one line, " +
+          "then proceed."
         else
           (if $judge == "on" then
             "Jev was unsure here (\($band) at only \($conf)), so decide it yourself. " else "" end) +

@@ -164,7 +164,14 @@ Which becomes:
   you walk the test. `frontier_model` says plainly that a System One model is the wrong tool.
 - **Gate false positive** — `plain_code`, `semantic` < 0.35, `mechanical` > 0.65, confidence ≥ 0.7
   collapses eight lines to one: *a name looked like a decision, Jev judged it plain code, carry on.*
-- **Low confidence** — the last row. The hook says "Jev was unsure here (system_one at only 0.37),
+- **Band unsure, Nouls decisive** — the band and the Nouls are separate questions in one response,
+  so an unsure band does not mean the answer is unknown. With `semantic` 0.93 and `mechanical` 0.13
+  the hook says *"Jev could not separate the bands (system_one at only 0.17), but it is confident
+  the purpose is to judge what text means... **band 1 is ruled out** — do not reach for a regex"*,
+  and narrows the remaining choice to one question. Ruling out band 1 is worth more than
+  reprinting the generic test, because band 1 is the band you most need ruled out. The mirror case
+  (`semantic` low, `mechanical` high) points at band 1 instead.
+- **Nothing decisive** — the hook says "Jev was unsure here (system_one at only 0.37),
   so decide it yourself" and falls back to the full test. That row is the best argument for the
   design: a tool that asserted `system_one` at 0.37 would be worse than the regex, and the whole
   premise of this repo is that knowing when not to trust the answer is the product.
