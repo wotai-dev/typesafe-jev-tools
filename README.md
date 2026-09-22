@@ -142,9 +142,9 @@ the gate-only advisory. Measured with a deliberately invalid key: 0.46s, no hang
 
 One request, three questions against one `state` (the [Speculative Fan-Out][fanout] pattern — extra
 questions are evaluated in parallel, so they ride along free): a `band` **Choice** over
-`plain_code` / `system_one` / `frontier_model`, plus two **Noul** probabilities, `semantic` ("does
-this code decide what some text means") and `mechanical` ("is the result fully determined by
-arithmetic, a field check, a regex or a lookup").
+`plain_code` / `system_one` / `frontier_model`, plus two **Noul** probabilities, `semantic` ("is the
+**purpose** of this function to judge what some text means") and `mechanical` ("is the purpose
+something arithmetic, a field check, a regex or a lookup can fully determine").
 
 [fanout]: https://docs.typesafe.ai/patterns
 
@@ -172,6 +172,26 @@ Which becomes:
 Cost is bounded by construction: the judge runs only in authoring mode, only after the
 once-per-file-per-session gate, on a ~1500-character snippet. About 500 input tokens per firing,
 which at $0.042/Mtok with free output is roughly **$0.00002** a time.
+
+### Ask about purpose, not about what the code does
+
+A fourth lesson, found by testing rather than reading. Both Nouls originally asked what the code
+*does* — "does this code decide what some text means". That collapses on a stub:
+
+| wording | stub that `throw`s | implemented |
+|---|---|---|
+| "does this code **decide** …" | **0.10** | 0.95 |
+| "is the **purpose** … to judge …" | **0.97** | 0.98 |
+
+Same function, same name, same return type — a three-way sentiment union. The difference is that a
+body which throws genuinely decides nothing, and literal reading answers the question you wrote.
+This matters more here than it would elsewhere, because the hook fires **while code is being
+authored**, which is precisely when it is signatures and stubs.
+
+`mechanical` stays low on a stub under either wording (0.24 → 0.38), and that is correct: there is
+nothing there yet to be determined mechanically. It fails in the safe direction, because the
+one-line collapse requires `mechanical` > 0.65, so an unjudgeable stub gets the full advisory
+rather than being waved through.
 
 ### Three things Jev's own jaggedness page changed
 

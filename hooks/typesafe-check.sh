@@ -136,7 +136,17 @@ if [ "$mode" = "author" ] && [ "${TYPESAFE_CHECK_JUDGE:-0}" = "1" ] && command -
     done
   fi
   if [ -n "$key" ]; then
-    # Jev's documented jaggedness includes context bloat: "accuracy falls as the
+    # Both Nouls ask about the function's PURPOSE, not about what the code does.
+    # The hook fires while code is being authored, which is when it is mostly
+    # signatures and stubs, and Jev's documented literal reading answers the
+    # question you wrote: "does this code decide ..." against a body that throws
+    # is honestly answered No. Measured on a sentiment classifier - stub 0.10 vs
+    # implementation 0.95 on the old wording, 0.97 vs 0.98 on this one. The
+    # `mechanical` Noul stays low on a stub either way (0.38), which is correct:
+    # nothing there is determinable yet, and since the one-line collapse requires
+    # mechanical > 0.65, an unjudgeable stub gets the full advisory. Fails safe.
+    #
+    # Jev's documented jaggedness also includes context bloat: "accuracy falls as the
     # state grows with content unrelated to the decision. Unrelated detail acts as
     # a distractor." So send the matched REGION, not a blind prefix - the lines the
     # gate hit plus a little context, capped. Falls back to the head if extraction
@@ -150,9 +160,9 @@ if [ "$mode" = "author" ] && [ "${TYPESAFE_CHECK_JUDGE:-0}" = "1" ] && command -
       state: $state, model: "jev-latest",
       questions: {
         semantic: { type: "noul", instructions:
-          "This is source code. Does this code decide what some text means, such as its sentiment, intent, category, or relevance?" },
+          "This is source code. Is the purpose of this function to judge what some text means, such as its sentiment, intent, category, or relevance?" },
         mechanical: { type: "noul", instructions:
-          "This is source code. Is the result fully determined by arithmetic, field presence, string equality, a regular expression, or a lookup?" },
+          "This is source code. Is the purpose of this function something arithmetic, field presence, string equality, a regular expression, or a lookup can fully determine?" },
         band: { type: "choice", instructions:
           "This is source code that makes a decision. Which approach fits that decision best?",
           criteria: {
